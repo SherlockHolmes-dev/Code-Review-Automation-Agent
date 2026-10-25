@@ -7,7 +7,6 @@ pipeline, and displays findings with a downloadable Markdown report.
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 
 import streamlit as st
@@ -44,8 +43,12 @@ def _load_example(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Session state helpers
+# Session state initialisation
 # ---------------------------------------------------------------------------
+
+if "source_code" not in st.session_state:
+    st.session_state["source_code"] = ""
+
 
 def _input_hash(source: str, description: str) -> str:
     """Hash the input to detect changes."""
@@ -78,36 +81,39 @@ st.info(
 )
 
 # --- Input mode ---
-col_mode, col_example = st.columns([2, 1])
+input_mode = st.radio(
+    "Input method",
+    ["Paste code", "Upload .py file"],
+    horizontal=True,
+)
 
-with col_mode:
-    input_mode = st.radio(
-        "Input method",
-        ["Paste code", "Upload .py file"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-
-with col_example:
-    example_choice = st.selectbox(
-        "Load example",
-        ["—"] + list(EXAMPLES.keys()),
-        label_visibility="collapsed",
-    )
+# --- Load example button ---
+st.markdown("**Load an example:**")
+example_cols = st.columns(len(EXAMPLES))
+for i, (name, _path) in enumerate(EXAMPLES.items()):
+    with example_cols[i]:
+        if st.button(name, use_container_width=True):
+            st.session_state["source_code"] = _load_example(name)
+            # Clear old results when loading a new example
+            st.session_state.pop("report", None)
+            st.session_state.pop("markdown_report", None)
+            st.session_state.pop("last_input_hash", None)
 
 # --- Code input ---
 source = ""
 
-if example_choice != "—":
-    source = _load_example(example_choice)
-    st.code(source, language="python", line_numbers=True)
-elif input_mode == "Paste code":
+if input_mode == "Paste code":
     source = st.text_area(
         "Paste your Python code here",
+        value=st.session_state.get("source_code", ""),
         height=350,
         placeholder="# Paste your Python code here...",
+        key="paste_area",
     )
+    # Keep session state in sync with the text area
+    st.session_state["source_code"] = source
 else:
+    # Upload mode
     uploaded_file = st.file_uploader(
         "Upload a .py file",
         type=["py"],
@@ -119,14 +125,24 @@ else:
             st.error("Only `.py` files are supported.")
         else:
             try:
-                raw_bytes = uploaded_file.read()
+                # Use getvalue() — safe across Streamlit reruns (no cursor issues)
+                raw_bytes = uploaded_file.getvalue()
                 source = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                st.error("File contains invalid text encoding. Please upload a UTF-8 encoded `.py` file.")
+                st.error(
+                    "File contains invalid text encoding. "
+                    "Please upload a UTF-8 encoded `.py` file."
+                )
                 source = ""
 
-            if source:
-                st.code(source, language="python", line_numbers=True)
+        if source:
+            st.session_state["source_code"] = source
+            st.code(source, language="python", line_numbers=True)
+    else:
+        # No file uploaded — keep whatever was in session (e.g. from an example)
+        source = st.session_state.get("source_code", "")
+        if source:
+            st.code(source, language="python", line_numbers=True)
 
 # --- Description ---
 description = st.text_input(
